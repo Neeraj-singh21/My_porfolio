@@ -15,7 +15,7 @@ import { cssProps, msToNum, numToMs } from '~/utils/style';
 import { baseMeta } from '~/utils/meta';
 import { Form, useActionData, useNavigation } from '@remix-run/react';
 import { json } from '@remix-run/cloudflare';
-import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
+// import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses'; // <--- CHANGED: Removed AWS Import
 import styles from './contact.module.css';
 
 export const meta = () => {
@@ -28,69 +28,49 @@ export const meta = () => {
 
 const MAX_EMAIL_LENGTH = 512;
 const MAX_MESSAGE_LENGTH = 4096;
-const EMAIL_PATTERN = /(.+)@(.+){2,}\.(.+){2,}/;
 
-export async function action({ context, request }) {
-  const ses = new SESClient({
-    region: 'us-east-1',
-    credentials: {
-      accessKeyId: context.cloudflare.env.AWS_ACCESS_KEY_ID,
-      secretAccessKey: context.cloudflare.env.AWS_SECRET_ACCESS_KEY,
-    },
-  });
-
+// <--- CHANGED: Simplified action function (No longer needs 'context' for AWS keys)
+export async function action({ request }) {
   const formData = await request.formData();
-  const isBot = String(formData.get('name'));
+  const name = String(formData.get('name') || '');
   const email = String(formData.get('email'));
   const message = String(formData.get('message'));
   const errors = {};
 
-  // Return without sending if a bot trips the honeypot
-  if (isBot) return json({ success: true });
+  // Honey pot check (if the hidden name field is filled, it's a bot)
+  if (name) return json({ success: true });
 
-  // Handle input validation on the server
-  if (!email || !EMAIL_PATTERN.test(email)) {
+  // Basic validation
+  if (!email || !email.includes('@')) {
     errors.email = 'Please enter a valid email address.';
   }
-
   if (!message) {
     errors.message = 'Please enter a message.';
   }
-
-  if (email.length > MAX_EMAIL_LENGTH) {
-    errors.email = `Email address must be shorter than ${MAX_EMAIL_LENGTH} characters.`;
-  }
-
-  if (message.length > MAX_MESSAGE_LENGTH) {
-    errors.message = `Message must be shorter than ${MAX_MESSAGE_LENGTH} characters.`;
-  }
-
   if (Object.keys(errors).length > 0) {
     return json({ errors });
   }
 
-  // Send email via Amazon SES
-  await ses.send(
-    new SendEmailCommand({
-      Destination: {
-        ToAddresses: [context.cloudflare.env.EMAIL],
+  // <--- CHANGED: Send via Formspree instead of AWS SES
+  try {
+    // I added your specific Formspree ID here: 'mwvpekay'
+    const response = await fetch('https://formspree.io/f/mwvpekay', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
-      Message: {
-        Body: {
-          Text: {
-            Data: `From: ${email}\n\n${message}`,
-          },
-        },
-        Subject: {
-          Data: `Portfolio message from ${email}`,
-        },
-      },
-      Source: `Portfolio <${context.cloudflare.env.FROM_EMAIL}>`,
-      ReplyToAddresses: [email],
-    })
-  );
+      body: JSON.stringify({ email, message })
+    });
 
-  return json({ success: true });
+    if (!response.ok) {
+      return json({ errors: { message: 'Failed to send message. Please try again later.' } });
+    }
+
+    return json({ success: true });
+  } catch (error) {
+    return json({ errors: { message: 'Network error. Please try again.' } });
+  }
 }
 
 export const Contact = () => {
